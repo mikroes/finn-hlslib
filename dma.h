@@ -198,4 +198,46 @@ void Stream2Mem_Batch(hls::stream<ap_uint<DataWidth> > & in, ap_uint<DataWidth> 
   }
 }
 
+
+/*!
+ * \brief Streaming block that fetches parameters from a memory pointer and presents them to the MVAU
+ * 
+ * \tparam TILES          Total folding factor of the neural network mapped on the fabric (Neuron Fold * Synapse Fold)
+ * \tparam SIMD 			    Number of input columns computed in parallel
+ * \tparam PE 				    Number of output rows computed in parallel
+ * \tparam WP 				    Precision of the weights in the network
+ * \tparam TW 				    DataType of the weights matrix - safely deducible from the paramaters
+ * 
+ * \param W_in            Pointer to the weight memory
+ * \param paramStreamOut  Parameter stream that contains SIMD * PE * WP long words to digest by the MVAU
+ * \param numReps         Number of times the function has to be repeatedly executed (e.g. number of images)
+ */
+template <
+    unsigned int TILES,
+    unsigned int SIMD,
+    unsigned int PE,
+    unsigned int WP,
+    typename TW>
+void GenParamStream(TW const &W_in, hls::stream<ap_uint<SIMD * PE * WP>> &paramStreamOut, const unsigned int numReps)
+{
+for_reps: for (unsigned rep = 0; rep < numReps; rep++) {
+  for_tiles: for (unsigned tile = 0; tile < TILES; tile++) {
+#pragma HLS PIPELINE II=1
+#pragma HLS INLINE
+      // read and stream the weight memory per tile
+      auto const &wcur = W_in.weights(tile);
+      // the streamed word should be SIMD * PE * WeightPrec wide
+      ap_uint<SIMD * PE * WP> strMem;
+      for (unsigned pe = 0; pe < PE; pe++) {
+        // Concatenate the weights within the tile into a large SIMD * PE * WP wide word        
+          ap_uint<WP * SIMD> word = wcur[pe];         
+          unsigned lo = (PE - pe - 1) * (SIMD * WP);
+          unsigned hi = (PE - pe) * (SIMD * WP) - 1;
+          strMem(hi, lo) = word;            
+        }
+      paramStreamOut.write(strMem);
+    }
+  }
+}
+
 #endif
